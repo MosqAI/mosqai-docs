@@ -77,17 +77,19 @@ Analytics must label every time bucket for every device with a coverage state:
 
 Area aggregates show coverage ("8 of 10 devices reporting") next to counts.
 
-## Device status (local LED)
+## Device status (local LED + buzzer)
 
-| Colour | Meaning |
-| --- | --- |
-| Green | Normal |
-| Blue | Connecting |
-| Amber | Warning |
-| Red | Fault |
-| Off | Device off |
+| State | Phase A: onboard red LED (GPIO 33) | Buzzer | Phase B: RGB LED |
+| --- | --- | --- | --- |
+| Normal | Short blink every 5 s | silent | Green |
+| Connecting | Fast blink (5 Hz) | silent | Blue |
+| Warning | Double blink every 2 s | 2 short beeps once | Amber |
+| Fault | Solid on | 3 long beeps, repeated every 5 min until cleared | Red |
+| Off | Off | silent | Off |
 
-Hardware note: high-current loads (fan, UV-A LEDs, CO₂ valve/pump) go through
+A command ack gets 1 short beep. `LOCATE` beeps continuously for 10 s, to find a device.
+
+Hardware note: high-current loads (fan, UV-A LEDs) go through
 MOSFET or driver stages. They are never driven directly from ESP32 GPIO pins.
 
 ## Hardware phases
@@ -96,40 +98,79 @@ The software must work with whatever hardware a device actually has. Each device
 reports its **capabilities**, and anything it doesn't have is shown as *not
 available*, never as a fake or zero value.
 
-### Phase A — ESP32-CAM only (current)
+### Phase A — current hardware, no sensors
 
-The team currently has only an AI-Thinker ESP32-CAM: no fan, UV-A, CO₂,
-temperature, voltage/current sensors, RGB LED or buzzer.
+Hardware: AI-Thinker ESP32-CAM, a fan, UV-A LEDs, a yeast + sugar CO₂ chamber,
+the camera LED and a buzzer. There are **no sensors**: no temperature,
+voltage/current or CO₂ sensor. Everything below is monitored using only the
+ESP32-CAM itself.
 
-| Function | Phase A implementation |
-| --- | --- |
-| Connectivity, identity, MQTT, heartbeat, online/offline | Full |
-| Commands + ack | `SET_FAN` / `SET_UV` drive stand-in outputs: the onboard flash LED (GPIO 4) and GPIO 13/14 (free when the SD card is unused). The device reads the pin back before acking. |
-| Camera capture + upload | Full (OV2640, PSRAM) |
-| Health | RSSI, uptime, free heap/PSRAM, camera init status, reset reason. Temperature, voltage and current are reported as `null`. |
-| Status indication | Onboard red LED (GPIO 33) blink codes instead of RGB; no buzzer |
-| Manual / automatic mode, schedules | Full (software only) |
+**Switching parts (required, not sensors):** the fan, UV-A LEDs and buzzer are
+switched through a logic-level N-MOSFET (e.g. AO3400 / IRLZ44N module) or an NPN
+transistor (buzzer), each with a gate/base pull-down resistor. The UV-A LEDs need
+their own current-limiting resistors. ESP32 pins must never power these loads
+directly.
 
-Constraints:
+#### Pin map (AI-Thinker ESP32-CAM, SD card unused)
 
-- **No analog sensing while Wi-Fi is on.** The free pins are on ADC2, which
-  the Wi-Fi radio blocks, so voltage/current sensing needs an external I²C ADC
-  or monitor (e.g. INA219) in Phase B.
-- **Stand-in outputs only prove pin state.** In Phase A the ack's
-  `verification` is `pin_readback`. Real verification (current draw,
-  tachometer) arrives with the Phase B hardware.
-- **Power:** use a stable 5 V supply of at least 2 A; Wi-Fi and the camera together cause brownout resets on weak supplies.
+| GPIO | Use | Notes |
+| --- | --- | --- |
+| 14 | Fan on/off (MOSFET gate) | |
+| 13 | Fan tachometer input | 3-wire fan only; internal pull-up, pulse-counting interrupt |
+| 15 | UV-A on/off (MOSFET gate) | Strapping pin; the pull-down keeps it LOW at boot |
+| 2 | Buzzer (transistor base) | Strapping pin; must be LOW/floating at boot, so it uses a pull-down |
+| 4 | Camera LED (onboard flash) | Already has its own transistor on the board |
+| 33 | Status LED (onboard red, active LOW) | Blink codes |
+| 12 | Spare, avoid | Strapping pin (flash voltage). HIGH at boot breaks booting. |
+| 1 / 3 | Serial debug (UART0) | |
+
+#### How each part is monitored without sensors
+
+| Part | Control | Verification (`verification` value in acks) | Health signal |
+| --- | --- | --- | --- |
+| Fan | `SET_FAN` | **Tachometer RPM** (`tach`) on a 3-wire fan. A 2-wire fan falls back to `pin_readback`. | RPM = 0 while ON → `FAN_STALLED` fault |
+| UV-A LEDs | `SET_UV` | **Camera self-test** (`camera_check`): frame brightness with UV off vs on must rise above a calibrated threshold | Self-test failed → `UV_FAULT` warning |
+| Camera LED | `SET_CAMERA_LED`, automatic during capture | `camera_check` (same brightness-delta method) | Self-test failed → `CAMERA_LED_FAULT` warning |
+| Camera | `CAPTURE_IMAGE` | Capture succeeds and the frame is not black, saturated or frozen | Init fail / bad frames → `CAMERA_FAULT` fault |
+| Buzzer | `BUZZ` (pattern) | `pin_readback` only (nothing can hear it) | none |
+| CO₂ chamber | none (passive fermentation) | not applicable | **Estimated** from time since refill (see below) |
+| Power | n/a | n/a | Brownout reset reason + reboot count → `POWER_UNSTABLE` warning |
+| Temperature, voltage, current | n/a | n/a | `null`, shown as *not available* |
+
+`SELF_TEST` runs the camera checks on demand. The device also runs them at boot
+and once a day (UV and LED pulsed briefly).
+
+#### CO₂ chamber (yeast + sugar)
+
+The chamber is passive: fermentation produces CO₂ continuously and the device
+cannot measure or control it. The backend models it instead:
+
+- The owner records a **refill** in the app (`POST /devices/:id/co2-chamber/refills`).
+- The backend derives `co2_status` from the time since the last refill:
+  `ACTIVE` → `DECLINING` → `EXHAUSTED`, or `UNKNOWN` if no refill has been recorded.
+  The thresholds are configurable (starting guess: 0–5 days active, 5–10 declining, then exhausted) and are tuned with real observations.
+- Apps always label it **"estimated"**, and an alert reminds the owner to refill.
+- Analytics stores the chamber state with each detection, so capture rates can
+  later be compared against chamber age.
+
+#### Other constraints
+
+- **No analog sensing while Wi-Fi is on.** The free pins are on ADC2, which the
+  Wi-Fi radio blocks.
+- **Power:** a stable supply sized for the ESP32-CAM (≥ 2 A at 5 V) **plus** the
+  fan and UV-A load, with a common ground. Wi-Fi and the camera together cause
+  brownout resets on weak supplies.
 - **Programming:** an ESP32-CAM-MB or FTDI adapter is needed (no USB on the board).
 - **AI:** the OV2640 is fixed-focus, 2 MP. Counting mosquitoes on a lit catch
   surface is realistic. Genus classification may not be. Train on images from
   this camera.
 
-### Phase B — full device
+### Phase B — sensors added later
 
-Adds MOSFET/driver stages for fan, UV-A and CO₂; a temperature sensor; an INA219
-(or similar) for voltage/current; RGB LED; buzzer; button. Because firmware and
-backend already treat these as optional capabilities, Phase B is additive: no
-contract changes are needed beyond new capability flags.
+Possible additions: temperature sensor, INA219 voltage/current monitor, CO₂
+sensor, RGB LED, button. Firmware and backend treat every part as an optional
+capability, so Phase B only flips capability flags and fills fields that are
+`null` today. No contract redesign is needed.
 
 ## Security baseline
 

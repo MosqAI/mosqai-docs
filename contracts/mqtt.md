@@ -34,19 +34,22 @@ See *Hardware phases* in `architecture.md`.
   "hw": "esp32-cam-ai-thinker",
   "capabilities": {
     "camera": true,
-    "fan": "standin",
-    "uv": "standin",
-    "co2": false,
+    "camera_led": true,
+    "fan": true,
+    "fan_tach": true,
+    "uv": true,
+    "buzzer": true,
+    "co2_chamber": "passive",
     "temperature": false,
     "power_monitor": false,
+    "co2_sensor": false,
     "rgb_led": false,
-    "buzzer": false,
     "button": false
   }
 }
 ```
-`"standin"` = the command is accepted and drives a test output, but no real
-actuator is attached. Apps must label such outputs clearly.
+`co2_chamber: "passive"` = yeast + sugar chamber with no control or sensor; the
+backend estimates its state from refill time (see `architecture.md`).
 The Last Will payload is `{ "state": "offline" }`.
 
 **heartbeat**
@@ -57,39 +60,57 @@ The Last Will payload is `{ "state": "offline" }`.
   "rssi": -61,
   "free_heap": 182000,
   "free_psram": 3900000,
-  "camera": "ok",
   "reset_reason": "POWERON",
+  "reboots_24h": 0,
+  "mode": "AUTOMATIC",
+  "camera": "ok",
+  "fan_rpm": 2400,
+  "last_self_test": { "ts": "...", "uv": "ok", "camera_led": "ok" },
   "temp_c": null,
   "voltage_v": null,
-  "current_a": null,
-  "mode": "AUTOMATIC"
+  "current_a": null
 }
 ```
+`fan_rpm` is `null` when the fan has no tachometer wire.
 
-**state**
+**state** (retained, published on every change)
 ```json
-{ "ts": "...", "mode": "MANUAL", "fan": true, "uv": false, "co2": null, "camera": "ok" }
+{ "ts": "...", "mode": "MANUAL", "fan": true, "uv": false, "camera_led": false, "camera": "ok" }
 ```
+
+**events**
+```json
+{ "ts": "...", "type": "FAN_STALLED", "severity": "FAULT", "detail": { "rpm": 0 } }
+```
+Event types: `BOOT`, `FAN_STALLED`, `UV_FAULT`, `CAMERA_LED_FAULT`,
+`CAMERA_FAULT`, `POWER_UNSTABLE` (brownout reset), `SELF_TEST_DONE`.
+Severity: `INFO` | `WARNING` | `FAULT`.
 
 **command**
 ```json
 { "command_id": "c1b9…uuid", "type": "SET_FAN", "params": { "on": false }, "issued_at": "...", "expires_at": "..." }
 ```
-Initial types: `SET_MODE`, `SET_FAN`, `SET_UV`, `SET_CO2`, `CAPTURE_IMAGE`, `SYNC_SCHEDULE`, `REBOOT`.
+Types: `SET_MODE`, `SET_FAN`, `SET_UV`, `SET_CAMERA_LED`, `BUZZ`
+(`params.pattern`: `ACK`, `WARNING`, `FAULT`, `LOCATE`), `CAPTURE_IMAGE`,
+`SELF_TEST`, `SYNC_SCHEDULE`, `REBOOT`.
+There is no CO₂ command: the chamber is passive.
 
 **ack**
 ```json
-{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": false }, "verification": "pin_readback", "error": null, "ts": "..." }
+{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": true, "fan_rpm": 2350 }, "verification": "tach", "error": null, "ts": "..." }
 ```
-`verification`: `pin_readback` (Phase A: output pin state read back) |
-`sensor` (Phase B: confirmed by current draw/tachometer) | `none`.
+`verification`: `tach` (fan RPM measured) | `camera_check` (brightness change
+seen by the camera) | `pin_readback` (output pin read back only) | `none`.
 A command for a capability the device doesn't have returns `REJECTED`
-with `error: "UNSUPPORTED"`.
+with `error: "UNSUPPORTED"`. If verification fails, the result is `FAILED`
+and `actual_state` reports what was observed.
 `result`: `OK` | `FAILED` | `REJECTED` (invalid or expired) | `DUPLICATE` (already applied; returns the same state).
 
 ## Open questions
 
 1. Heartbeat interval (30 s?) and offline timeout (3 missed beats?).
 2. Device credentials: username/password per device vs. X.509 client certificates.
-3. ~~Fan health source~~: Phase A uses pin readback; Phase B decides tachometer vs current draw.
+3. Is the fan 3-wire (tachometer)? If it's 2-wire, fan verification is `pin_readback` only.
+5. Self-test brightness thresholds for UV-A and the camera LED: calibrate on the real enclosure.
+6. CO₂ chamber status thresholds (days active/declining): tune from real refills.
 4. Image upload auth: same device credential, or short-lived upload token requested over MQTT?
