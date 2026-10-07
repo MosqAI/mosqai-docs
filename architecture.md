@@ -90,6 +90,47 @@ Area aggregates show coverage ("8 of 10 devices reporting") next to counts.
 Hardware note: high-current loads (fan, UV-A LEDs, CO₂ valve/pump) go through
 MOSFET or driver stages. They are never driven directly from ESP32 GPIO pins.
 
+## Hardware phases
+
+The software must work with whatever hardware a device actually has. Each device
+reports its **capabilities**, and anything it doesn't have is shown as *not
+available*, never as a fake or zero value.
+
+### Phase A — ESP32-CAM only (current)
+
+The team currently has only an AI-Thinker ESP32-CAM: no fan, UV-A, CO₂,
+temperature, voltage/current sensors, RGB LED or buzzer.
+
+| Function | Phase A implementation |
+| --- | --- |
+| Connectivity, identity, MQTT, heartbeat, online/offline | Full |
+| Commands + ack | `SET_FAN` / `SET_UV` drive stand-in outputs: the onboard flash LED (GPIO 4) and GPIO 13/14 (free when the SD card is unused). The device reads the pin back before acking. |
+| Camera capture + upload | Full (OV2640, PSRAM) |
+| Health | RSSI, uptime, free heap/PSRAM, camera init status, reset reason. Temperature, voltage and current are reported as `null`. |
+| Status indication | Onboard red LED (GPIO 33) blink codes instead of RGB; no buzzer |
+| Manual / automatic mode, schedules | Full (software only) |
+
+Constraints:
+
+- **No analog sensing while Wi-Fi is on.** The free pins are on ADC2, which
+  the Wi-Fi radio blocks, so voltage/current sensing needs an external I²C ADC
+  or monitor (e.g. INA219) in Phase B.
+- **Stand-in outputs only prove pin state.** In Phase A the ack's
+  `verification` is `pin_readback`. Real verification (current draw,
+  tachometer) arrives with the Phase B hardware.
+- **Power:** use a stable 5 V supply of at least 2 A; Wi-Fi and the camera together cause brownout resets on weak supplies.
+- **Programming:** an ESP32-CAM-MB or FTDI adapter is needed (no USB on the board).
+- **AI:** the OV2640 is fixed-focus, 2 MP. Counting mosquitoes on a lit catch
+  surface is realistic. Genus classification may not be. Train on images from
+  this camera.
+
+### Phase B — full device
+
+Adds MOSFET/driver stages for fan, UV-A and CO₂; a temperature sensor; an INA219
+(or similar) for voltage/current; RGB LED; buzzer; button. Because firmware and
+backend already treat these as optional capabilities, Phase B is additive: no
+contract changes are needed beyond new capability flags.
+
 ## Security baseline
 
 - Users: JWT access tokens plus rotating refresh tokens; RBAC roles (`OWNER`, `AUTHORITY_VIEWER`, `AUTHORITY_ADMIN`, `ADMIN`).

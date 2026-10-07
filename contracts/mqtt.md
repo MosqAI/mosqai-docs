@@ -23,23 +23,52 @@
 
 ## Payloads (proposed)
 
+Fields for hardware a device doesn't have are `null`, never `0` or a guess.
+See *Hardware phases* in `architecture.md`.
+
+**status** (retained; `online` payload also carries capabilities)
+```json
+{
+  "state": "online",
+  "fw": "0.1.0",
+  "hw": "esp32-cam-ai-thinker",
+  "capabilities": {
+    "camera": true,
+    "fan": "standin",
+    "uv": "standin",
+    "co2": false,
+    "temperature": false,
+    "power_monitor": false,
+    "rgb_led": false,
+    "buzzer": false,
+    "button": false
+  }
+}
+```
+`"standin"` = the command is accepted and drives a test output, but no real
+actuator is attached. Apps must label such outputs clearly.
+The Last Will payload is `{ "state": "offline" }`.
+
 **heartbeat**
 ```json
 {
   "ts": "2026-10-07T10:00:00Z",
-  "fw": "0.1.0",
   "uptime_s": 3600,
   "rssi": -61,
-  "temp_c": 31.4,
-  "voltage_v": 11.9,
-  "current_a": 0.82,
+  "free_heap": 182000,
+  "free_psram": 3900000,
+  "camera": "ok",
+  "reset_reason": "POWERON",
+  "temp_c": null,
+  "voltage_v": null,
+  "current_a": null,
   "mode": "AUTOMATIC"
 }
 ```
 
 **state**
 ```json
-{ "ts": "...", "mode": "MANUAL", "fan": true, "uv": true, "co2": false, "camera": "ok" }
+{ "ts": "...", "mode": "MANUAL", "fan": true, "uv": false, "co2": null, "camera": "ok" }
 ```
 
 **command**
@@ -50,13 +79,17 @@ Initial types: `SET_MODE`, `SET_FAN`, `SET_UV`, `SET_CO2`, `CAPTURE_IMAGE`, `SYN
 
 **ack**
 ```json
-{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": false }, "error": null, "ts": "..." }
+{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": false }, "verification": "pin_readback", "error": null, "ts": "..." }
 ```
+`verification`: `pin_readback` (Phase A: output pin state read back) |
+`sensor` (Phase B: confirmed by current draw/tachometer) | `none`.
+A command for a capability the device doesn't have returns `REJECTED`
+with `error: "UNSUPPORTED"`.
 `result`: `OK` | `FAILED` | `REJECTED` (invalid or expired) | `DUPLICATE` (already applied; returns the same state).
 
 ## Open questions
 
 1. Heartbeat interval (30 s?) and offline timeout (3 missed beats?).
 2. Device credentials: username/password per device vs. X.509 client certificates.
-3. Does the device report fan health from tachometer/current draw, or only commanded state?
+3. ~~Fan health source~~: Phase A uses pin readback; Phase B decides tachometer vs current draw.
 4. Image upload auth: same device credential, or short-lived upload token requested over MQTT?
