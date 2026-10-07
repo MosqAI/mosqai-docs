@@ -1,6 +1,6 @@
 # MQTT contract — v0 DRAFT
 
-> Status: **DRAFT**. Both developers must review and approve before M1 code is
+> Status: **DRAFT**. RavynX0 and Hope664 must both review and approve before M1 code is
 > written. Change via PR to `mosqai-docs` only.
 
 ## Conventions

@@ -1,0 +1,5 @@
+# Reviews are requested automatically from these teams.
+* @MosqAI/core
+
+# AI contracts and decisions also need the AI team
+/contracts/ai* @MosqAI/core @MosqAI/ai
