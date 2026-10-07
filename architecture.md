@@ -79,7 +79,7 @@ Area aggregates show coverage ("8 of 10 devices reporting") next to counts.
 
 ## Device status (local LED + buzzer)
 
-| State | Phase A: onboard red LED (GPIO 33) | Buzzer | Phase B: RGB LED |
+| State | Phase A: white status LED (GPIO 13) | Buzzer (when fitted) | Phase B: RGB LED |
 | --- | --- | --- | --- |
 | Normal | Short blink every 5 s | silent | Green |
 | Connecting | Fast blink (5 Hz) | silent | Blue |
@@ -100,27 +100,39 @@ available*, never as a fake or zero value.
 
 ### Phase A — current hardware, no sensors
 
-Hardware: AI-Thinker ESP32-CAM, a fan, UV-A LEDs, a yeast + sugar CO₂ chamber,
-the camera LED and a buzzer. There are **no sensors**: no temperature,
-voltage/current or CO₂ sensor. Everything below is monitored using only the
-ESP32-CAM itself.
+#### Parts in hand (2026-10-07)
 
-**Switching parts (required, not sensors):** the fan, UV-A LEDs and buzzer are
-switched through a logic-level N-MOSFET (e.g. AO3400 / IRLZ44N module) or an NPN
-transistor (buzzer), each with a gate/base pull-down resistor. The UV-A LEDs need
-their own current-limiting resistors. ESP32 pins must never power these loads
-directly.
+ESP32-CAM, power adapter, buck converter (adapter → 5 V for the ESP32-CAM),
+capacitor (across the ESP32 5 V/GND to absorb power dips), small white LED,
+**2-wire fan** (no tachometer), UV-A LED strip, wires, plus the yeast + sugar CO₂
+chamber. There are **no sensors**: no temperature, voltage/current or CO₂ sensor.
+Everything below is monitored using only the ESP32-CAM itself.
+
+#### Still to buy before the firmware work
+
+| Item | Why |
+| --- | --- |
+| ESP32-CAM-MB programmer (or FTDI adapter) | The board has no USB port, so firmware can't be flashed without it |
+| 2 × **logic-level** MOSFET modules (AO3400 / IRLZ44N / D4184), **not** IRF520 | Switch the fan and UV-A strip from 3.3 V GPIO |
+| 1 × diode (1N5819 / 1N4007) | Flyback protection across the fan motor |
+| 220 Ω resistor | For the white status LED |
+| Optional: active buzzer + 2N2222 transistor + 1 kΩ resistor | Audible alerts. Firmware reports `buzzer: false` until it's fitted. |
+| Optional: 3-wire fan | Lets the device measure RPM and detect a stalled fan |
+
+Power budget: the adapter rating and the fan and UV-strip voltages still need to be confirmed.
+
+ESP32 pins must never power the fan, UV strip or buzzer directly.
 
 #### Pin map (AI-Thinker ESP32-CAM, SD card unused)
 
 | GPIO | Use | Notes |
 | --- | --- | --- |
 | 14 | Fan on/off (MOSFET gate) | |
-| 13 | Fan tachometer input | 3-wire fan only; internal pull-up, pulse-counting interrupt |
 | 15 | UV-A on/off (MOSFET gate) | Strapping pin; the pull-down keeps it LOW at boot |
-| 2 | Buzzer (transistor base) | Strapping pin; must be LOW/floating at boot, so it uses a pull-down |
+| 13 | White status LED (via 220 Ω) | Visible outside the enclosure. If a 3-wire fan is fitted later, its tachometer moves here and the status LED moves to GPIO 33. |
+| 2 | Buzzer (transistor base), when fitted | Strapping pin; must be LOW/floating at boot, so it uses a pull-down |
 | 4 | Camera LED (onboard flash) | Already has its own transistor on the board |
-| 33 | Status LED (onboard red, active LOW) | Blink codes |
+| 33 | Onboard red LED (active LOW) | Debug only (hidden inside the enclosure) |
 | 12 | Spare, avoid | Strapping pin (flash voltage). HIGH at boot breaks booting. |
 | 1 / 3 | Serial debug (UART0) | |
 
@@ -128,7 +140,8 @@ directly.
 
 | Part | Control | Verification (`verification` value in acks) | Health signal |
 | --- | --- | --- | --- |
-| Fan | `SET_FAN` | **Tachometer RPM** (`tach`) on a 3-wire fan. A 2-wire fan falls back to `pin_readback`. | RPM = 0 while ON → `FAN_STALLED` fault |
+| Fan (2-wire, current) | `SET_FAN` | `pin_readback`. Apps show "on, not verified". | none (a stalled fan can't be detected) |
+| Fan (3-wire, upgrade) | `SET_FAN` | `tach` (RPM measured) | RPM = 0 while ON → `FAN_STALLED` fault |
 | UV-A LEDs | `SET_UV` | **Camera self-test** (`camera_check`): frame brightness with UV off vs on must rise above a calibrated threshold | Self-test failed → `UV_FAULT` warning |
 | Camera LED | `SET_CAMERA_LED`, automatic during capture | `camera_check` (same brightness-delta method) | Self-test failed → `CAMERA_LED_FAULT` warning |
 | Camera | `CAPTURE_IMAGE` | Capture succeeds and the frame is not black, saturated or frozen | Init fail / bad frames → `CAMERA_FAULT` fault |

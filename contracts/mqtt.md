@@ -36,9 +36,9 @@ See *Hardware phases* in `architecture.md`.
     "camera": true,
     "camera_led": true,
     "fan": true,
-    "fan_tach": true,
+    "fan_tach": false,
     "uv": true,
-    "buzzer": true,
+    "buzzer": false,
     "co2_chamber": "passive",
     "temperature": false,
     "power_monitor": false,
@@ -64,14 +64,14 @@ The Last Will payload is `{ "state": "offline" }`.
   "reboots_24h": 0,
   "mode": "AUTOMATIC",
   "camera": "ok",
-  "fan_rpm": 2400,
+  "fan_rpm": null,
   "last_self_test": { "ts": "...", "uv": "ok", "camera_led": "ok" },
   "temp_c": null,
   "voltage_v": null,
   "current_a": null
 }
 ```
-`fan_rpm` is `null` when the fan has no tachometer wire.
+`fan_rpm` is `null` while the fan has no tachometer wire (current 2-wire fan). `buzzer` becomes `true` once one is fitted.
 
 **state** (retained, published on every change)
 ```json
@@ -97,7 +97,7 @@ There is no CO₂ command: the chamber is passive.
 
 **ack**
 ```json
-{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": true, "fan_rpm": 2350 }, "verification": "tach", "error": null, "ts": "..." }
+{ "command_id": "c1b9…", "result": "OK", "actual_state": { "fan": true, "fan_rpm": null }, "verification": "pin_readback", "error": null, "ts": "..." }
 ```
 `verification`: `tach` (fan RPM measured) | `camera_check` (brightness change
 seen by the camera) | `pin_readback` (output pin read back only) | `none`.
@@ -110,7 +110,7 @@ and `actual_state` reports what was observed.
 
 1. Heartbeat interval (30 s?) and offline timeout (3 missed beats?).
 2. Device credentials: username/password per device vs. X.509 client certificates.
-3. Is the fan 3-wire (tachometer)? If it's 2-wire, fan verification is `pin_readback` only.
+3. ~~Fan type~~: the current fan is 2-wire, so verification is `pin_readback` until a 3-wire fan is fitted.
 5. Self-test brightness thresholds for UV-A and the camera LED: calibrate on the real enclosure.
 6. CO₂ chamber status thresholds (days active/declining): tune from real refills.
 4. Image upload auth: same device credential, or short-lived upload token requested over MQTT?
